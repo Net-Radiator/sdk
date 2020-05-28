@@ -605,6 +605,9 @@ public:
 
 };
 
+bool wildcardMatch(const char* pszString, const char* pszMatch);
+bool wildcardMatch(const char* string, const string_vector &patterns);
+
 } // namespace
 
 #endif
