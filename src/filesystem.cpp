@@ -18,6 +18,8 @@
  * You should have received a copy of the license along with this
  * program.
  */
+#include <cctype>
+
 #include "mega/filesystem.h"
 #include "mega/node.h"
 #include "mega/megaclient.h"
@@ -123,52 +125,39 @@ FileSystemType FileSystemAccess::getlocalfstype(const LocalPath& path) const
     return FS_UNKNOWN;
 }
 
-bool FileSystemAccess::isControlChar(unsigned char c) const
+bool FileSystemAccess::islocalfscompatible(const int character, const FileSystemType type) const
 {
-    return (c <= '\x1F' || c == '\x7F');
-}
-
-// Group different filesystems types in families, according to its restricted charsets
-bool FileSystemAccess::islocalfscompatible(unsigned char c, bool isEscape, FileSystemType fileSystemType) const
-{
-    switch (fileSystemType)
+    // Always escape control characters.
+    if (std::iscntrl(character))
     {
-        case FS_APFS:
-        case FS_HFS:
-            // APFS, HFS, HFS+ restricted characters => : /
-            return c != '\x3A' && c != '\x2F';
-        case FS_F2FS:
-        case FS_EXT:
-        case FS_XFS:
-            // f2fs and ext2/ext3/ext4 restricted characters =>  / NULL
-            return c != '\x00' && c != '\x2F';
-        case FS_FAT32:
-            // Control characters will be escaped but not unescaped
-            // FAT32 restricted characters => " * / : < > ? \ | + , ; = [ ]
-            return (isControlChar(c) && isEscape)
-                        ? false
-                        : !strchr("\\/:?\"<>|*+,;=[]", c);
-        case FS_EXFAT:
-        case FS_NTFS:
-            // Control characters will be escaped but not unescaped
-            // ExFAT, NTFS restricted characters => " * / : < > ? \ |
-            return (isControlChar(c) && isEscape)
-                        ? false
-                        : !strchr("\\/:?\"<>|*", c);
-        case FS_FUSE:
-        case FS_SDCARDFS:
-            // FUSE and SDCARDFS are Android filesystem wrappers used to mount traditional filesystems
-            // as ext4, Fat32, extFAT...
-            // So we will consider that restricted characters for these wrappers are the same
-            // as for Android => " * / : < > ? \ |
-            return !strchr("\\/:?\"<>|*", c);
+        return false;
+    }
 
-        case FS_UNKNOWN:
-        default:
-            // If filesystem couldn't be detected we'll use the most restrictive charset to avoid issues.
-            return (isControlChar(c) && isEscape)
-                    ? false
-                    : !strchr("\\/:?\"<>|*+,;=[]", c);
+    // Likewise with '%', to prevent confusion during unescaping.
+    if (character == '%')
+    {
+        return false;
+    }
+
+    // Filesystem-specific policies.
+    switch (type)
+    {
+    case FS_APFS:
+    case FS_HFS:
+        return character != ':' && character != '/';
+    case FS_EXT:
+    case FS_F2FS:
+    case FS_XFS:
+        return character != '/';
+    case FS_EXFAT:
+    case FS_FUSE:
+    case FS_NTFS:
+    case FS_SDCARDFS:
+        return !strchr("\\/:?\"<>|*", character);
+    case FS_FAT32:
+    case FS_UNKNOWN:
+    default:
+        return !strchr("\\/:?\"<>|*+,;=[]", character);
     }
 }
 
@@ -180,41 +169,47 @@ void FileSystemAccess::escapefsincompatible(string* name, FileSystemType fileSys
         name->replace(0, 2, "%2e%2e");
         return;
     }
+
     if (!name->compare("."))
     {
         name->replace(0, 1, "%2e");
         return;
     }
 
-    char buf[4];
-    size_t utf8seqsize = 0;
-    size_t i = 0;
-    unsigned char c = '0';
-    while (i < name->size())
+    for (size_t i = 0; i < name->size(); )
     {
-        c = static_cast<unsigned char>((*name)[i]);
-        utf8seqsize = Utils::utf8SequenceSize(c);
-        assert (utf8seqsize);
-        if (utf8seqsize == 1 && !islocalfscompatible(c, true, fileSystemType))
+        auto c = (*name)[i];
+        auto seqsize = Utils::utf8SequenceSize(c);
+
+        assert(seqsize);
+
+        if (seqsize == 1 && !islocalfscompatible(c, fileSystemType))
         {
-            const char incompatibleChar = name->at(i);
-            sprintf(buf, "%%%02x", c);
-            name->replace(i, 1, buf);
-            LOG_debug << "Escape incompatible character for filesystem type "
+            char buffer[4];
+
+            sprintf(buffer, "%%%02x", c);
+            name->replace(i, 1, buffer);
+
+            LOG_debug << "Escaped character for filesystem type "
                       << fstypetostring(fileSystemType)
-                      << ", replace '" << incompatibleChar << "' by '" << buf << "'\n";
+                      << ": "
+                      << buffer;
+
+            seqsize = 3;
         }
-        i += utf8seqsize;
+
+        i += seqsize;
     }
 }
 
-void FileSystemAccess::unescapefsincompatible(string *name, FileSystemType fileSystemType) const
+void FileSystemAccess::unescapefsincompatible(string *name) const
 {
     if (!name->compare("%2e%2e"))
     {
         name->replace(0, 6, "..");
         return;
     }
+
     if (!name->compare("%2e"))
     {
         name->replace(0, 3, ".");
@@ -223,20 +218,27 @@ void FileSystemAccess::unescapefsincompatible(string *name, FileSystemType fileS
 
     for (int i = int(name->size()) - 2; i-- > 0; )
     {
-        // conditions for unescaping: %xx must be well-formed
-        if ((*name)[i] == '%' && islchex((*name)[i + 1]) && islchex((*name)[i + 2]))
+        // For convenience.
+        const char* s = &(*name)[i];
+        
+        // Are we processing an escape sequence?
+        if (!(s[0] == '%' && islchex(s[1]) && islchex(s[2])))
         {
-            char c = static_cast<char>((MegaClient::hexval((*name)[i + 1]) << 4) + MegaClient::hexval((*name)[i + 2]));
-
-            if (!islocalfscompatible(static_cast<unsigned char>(c), false, fileSystemType))
-            {
-                std::string incompatibleChar = name->substr(i, 3);
-                name->replace(i, 3, &c, 1);
-                LOG_debug << "Unescape incompatible character for filesystem type "
-                          << fstypetostring(fileSystemType)
-                          << ", replace '" << incompatibleChar << "' by '" << name->substr(i, 1) << "'\n";
-            }
+            continue;
         }
+
+        // What character does the sequence encode?
+        const auto character =
+          MegaClient::hexval(s[1]) << 4 | MegaClient::hexval(s[2]);
+
+        // Is it a decodable character?
+        if (std::iscntrl(character))
+        {
+            continue;
+        }
+
+        // Substitute in the decoded character.
+        name->replace(i, 3, 1, character);
     }
 }
 
@@ -310,7 +312,7 @@ void FileSystemAccess::local2name(string *filename, FileSystemType fsType) const
 
     local2path(&t, filename);
 
-    unescapefsincompatible(filename, fsType);
+    unescapefsincompatible(filename);
 }
 
 std::unique_ptr<LocalPath> FileSystemAccess::fsShortname(LocalPath& localname)

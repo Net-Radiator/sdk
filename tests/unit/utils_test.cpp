@@ -22,6 +22,8 @@
 #include <gtest/gtest.h>
 
 #include <mega/utils.h>
+#include <mega/filesystem.h>
+#include "megafs.h"
 
 TEST(utils, hashCombine_integer)
 {
@@ -34,3 +36,48 @@ TEST(utils, hashCombine_integer)
     ASSERT_EQ(2654435811ull, hash);
 #endif
 }
+
+TEST(Filesystem, EscapesReservedCharacters)
+{
+    using namespace mega;
+
+    // All of these characters will be escaped.
+    string name = "%\r\\/:?\"<>|*+,;=[]";
+
+    // Generate expected result.
+    ostringstream osstream;
+
+    for (auto character : name)
+    {
+        osstream << "%"
+                 << std::hex
+                 << std::setfill('0')
+                 << std::setw(2)
+                 << +character;
+    }
+
+    // Use most restrictive escaping policy.
+    FSACCESS_CLASS fsAccess;
+    fsAccess.escapefsincompatible(&name, FS_UNKNOWN);
+
+    // Was the string correctly escaped?
+    ASSERT_EQ(name, osstream.str());
+}
+
+TEST(Filesystem, UnescapesEscapedCharacters)
+{
+    using namespace mega;
+
+    FSACCESS_CLASS fsAccess;
+
+    // All of these characters will be escaped.
+    string name = "%\r\\/:?\"<>|*+,;=[]";
+    fsAccess.escapefsincompatible(&name, FS_UNKNOWN);
+
+    // Everything will be unescaped except for control characters.
+    fsAccess.unescapefsincompatible(&name);
+
+    // Was the string correctly unescaped?
+    ASSERT_STREQ(name.c_str(), "%%0d\\/:?\"<>|*+,;=[]");
+}
+

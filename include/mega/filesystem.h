@@ -410,14 +410,13 @@ struct MEGA_API FileSystemAccess : public EventTrigger
 
     // check if character is lowercase hex ASCII
     bool islchex(char) const;
-    bool isControlChar(unsigned char c) const;
-    bool islocalfscompatible(unsigned char, bool isEscape, FileSystemType = FS_UNKNOWN) const;
+    bool islocalfscompatible(const int character, const FileSystemType type) const;
     void escapefsincompatible(string*, FileSystemType fileSystemType) const;
 
     const char *fstypetostring(FileSystemType type) const;
     virtual bool getlocalfstype(const LocalPath& path, FileSystemType& type) const = 0;
     FileSystemType getlocalfstype(const LocalPath& path) const;
-    void unescapefsincompatible(string*,FileSystemType) const;
+    void unescapefsincompatible(string*) const;
 
     // convert MEGA path (UTF-8) to local format
     virtual void path2local(const string*, string*) const = 0;
