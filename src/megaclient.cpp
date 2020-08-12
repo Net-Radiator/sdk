@@ -12499,7 +12499,7 @@ void MegaClient::stopxfers(LocalNode* l, DBTableTransactionCommitter& committer)
 // of identical names to avoid flapping)
 // apply standard unescaping, if necessary (use *strings as ephemeral storage
 // space)
-void MegaClient::addchild(remotenode_map* nchildren, string* name, Node* n, list<string>* strings, FileSystemType fsType) const
+void MegaClient::addchild(remotenode_map* nchildren, string* name, Node* n, list<string>* strings) const
 {
     Node** npp;
 
@@ -12510,7 +12510,7 @@ void MegaClient::addchild(remotenode_map* nchildren, string* name, Node* n, list
         // perform one round of unescaping to ensure that the resulting local
         // filename matches
         fsaccess->path2local(name, &tmplocalname);
-        fsaccess->local2name(&tmplocalname, fsType);
+        fsaccess->local2name(&tmplocalname);
 
         strings->push_back(tmplocalname);
         name = &strings->back();
@@ -12572,7 +12572,7 @@ bool MegaClient::syncdown(LocalNode* l, LocalPath& localpath, bool rubbish)
 
             if (app->sync_syncable(l->sync, ait->second.c_str(), localpath, *it))
             {
-                addchild(&nchildren, &ait->second, *it, &strings, l->sync->mFilesystemType);
+                addchild(&nchildren, &ait->second, *it, &strings);
             }
             else
             {
@@ -12943,7 +12943,7 @@ bool MegaClient::syncup(LocalNode* l, dstime* nds)
                     continue;
                 }
 
-                addchild(&nchildren, &ait->second, *it, &strings, l->sync->mFilesystemType);
+                addchild(&nchildren, &ait->second, *it, &strings);
             }
         }
     }
@@ -12961,7 +12961,7 @@ bool MegaClient::syncup(LocalNode* l, dstime* nds)
         }
 
         // UTF-8 converted local name
-        string localname = ll->localname.toName(*fsaccess, l->sync->mFilesystemType);
+        string localname = ll->localname.toName(*fsaccess);
         if (!localname.size() || !ll->name.size())
         {
             if (!ll->reported)
@@ -14191,8 +14191,7 @@ Node* MegaClient::nodebyfingerprint(LocalNode* localNode)
         return nullptr;
 
     std::string localName =
-      localNode->localname.toName(*fsaccess,
-                                  localNode->sync->mFilesystemType);
+      localNode->localname.toName(*fsaccess);
     
     // Only compare metamac if the node doesn't already exist.
     node_vector::const_iterator remoteNode =
