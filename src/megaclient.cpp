@@ -12880,7 +12880,7 @@ bool MegaClient::syncdown(LocalNode* l, LocalPath& localpath, bool rubbish)
 // if attached to an existing node
 // l and n are assumed to be folders and existing on both sides or scheduled
 // for creation
-bool MegaClient::syncup(LocalNode* l, dstime* nds)
+bool MegaClient::syncup(LocalNode* l, dstime* nds, size_t& parentPending)
 {
     bool insync = true;
 
@@ -12890,6 +12890,9 @@ bool MegaClient::syncup(LocalNode* l, dstime* nds)
 
     // build array of sync-relevant (newest alias wins) remote children by name
     attr_map::iterator ait;
+
+    // Number of nodes waiting for their parent to be created.
+    size_t numPending = 0;
 
     if (l->node)
     {
@@ -13168,8 +13171,9 @@ bool MegaClient::syncup(LocalNode* l, dstime* nds)
                     }
 
                     // recurse into directories of equal name
-                    if (!syncup(ll, nds))
+                    if (!syncup(ll, nds, numPending))
                     {
+                        parentPending += numPending;
                         return false;
                     }
                     continue;
@@ -13360,7 +13364,7 @@ bool MegaClient::syncup(LocalNode* l, dstime* nds)
                 LOG_err << "LocalNode created and reported " << ll->name;
             }
         }
-        else
+        else if (ll->parent->node)
         {
             ll->created = true;
 
@@ -13373,25 +13377,43 @@ bool MegaClient::syncup(LocalNode* l, dstime* nds)
             if (synccreate.size() >= MAX_NEWNODES)
             {
                 LOG_warn << "Stopping syncup due to MAX_NEWNODES";
+                parentPending += numPending;
                 return false;
             }
+        }
+        else
+        {
+            LOG_debug << "Skipping syncup of "
+                      << ll->name
+                      << " as its parent doesn't exist.";
+            ++numPending;
         }
 
         if (ll->type == FOLDERNODE)
         {
-            if (!syncup(ll, nds))
+            if (!syncup(ll, nds, numPending))
             {
+                parentPending += numPending;
                 return false;
             }
         }
     }
 
-    if (insync && l->node)
+    if (insync && l->node && numPending == 0)
     {
         l->treestate(TREESTATE_SYNCED);
     }
 
+    parentPending += numPending;
+
     return true;
+}
+
+bool MegaClient::syncup(LocalNode* l, dstime* nds)
+{
+    size_t numPending = 0;
+
+    return syncup(l, nds, numPending) && numPending == 0;
 }
 
 // execute updates stored in synccreate[]
